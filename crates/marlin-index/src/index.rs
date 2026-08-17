@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn search_symbols_finds_definitions() {
-        let mut df: HashMap<String, usize> = HashMap::new();
+        let df: HashMap<String, usize> = HashMap::new();
         let files = vec![
             FileEntry {
                 path: "a.rs".into(),
@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn symbol_hits_boost_search_ranking() {
-        let mut df: HashMap<String, usize> = HashMap::new();
+        let df: HashMap<String, usize> = HashMap::new();
         // b.rs defines "widget"; a.rs merely mentions it once in text.
         let mut a_tf = HashMap::new();
         a_tf.insert("widget".into(), 0.5);

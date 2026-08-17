@@ -83,33 +83,6 @@ mod tests {
     use marlin_tools::all_tools;
 
     #[test]
-    fn debug_real_prompt() {
-        let system_prompt = "You are Marlin, an AI coding assistant running in a terminal.\n\
-            You help the user write, debug, and understand code.\n\n\
-            When asked to create a file, write code, edit something, or run a command — DO IT with the appropriate tool. \
-            Do not explain how the user could do it themselves. Do not ask for confirmation before using tools. Just act.\n\n\
-            Working directory: /Users/henry/Developer/marlin\n\n\
-            ## Active Goal\nhi\n\n\
-            Work toward this goal using tools. Keep calling tools until the task is fully complete.\n\
-            When — and only when — every part of the goal is actually done, call the mark_complete tool \
-                (alone, with no other tool calls in that turn) with a short summary. Do not just say you're done or \
-                describe what you're about to do in plain text and stop; if you catch yourself writing \"let me now...\" \
-                or \"I'll...\", make that tool call instead. Plain text with no tool call is only for asking the user \
-                a question or reporting you're permanently blocked.\n\
-            Progress so far: 0 tool calls made.\n";
-        let tools = all_tools(
-            &AstMode::Off,
-            &[("explore".into(), "explore the codebase".into())],
-            &[],
-            false,
-            &[],
-        );
-        let report = compute(system_prompt, &tools);
-        eprintln!("DEBUG REPORT:\n{}", report.format());
-        assert!(false, "debug");
-    }
-
-    #[test]
     fn default_config_stays_under_budget() {
         // No skills, no external tools, no AST harness — the minimal request
         // every fresh install sends. Regressions here mean someone added
