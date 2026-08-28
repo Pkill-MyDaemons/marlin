@@ -10,9 +10,29 @@ use marlin_snapshots::snapshots::DiffLine;
 use crate::skill::SkillDef;
 use crate::tasks::TaskStep;
 
+/// A single conversation entry from a loaded/resumed session, carried to the
+/// TUI so it can repopulate its chat display after `/resume` or `--resume-last`.
+/// Lives in `marlin-core` (rather than reusing the engine's provider `Message`)
+/// so the TUI doesn't need a dependency on `marlin-providers`/`marlin-history`.
+#[derive(Debug, Clone)]
+pub struct HistoryEntry {
+    /// "user" | "assistant" | "tool"
+    pub role: String,
+    pub content: String,
+    /// Tool name for a tool-call entry (empty otherwise).
+    pub tool_name: String,
+    /// JSON-encoded input args for a tool-call entry (empty otherwise).
+    pub tool_input: String,
+    /// True for a failed tool result.
+    pub is_error: bool,
+}
+
 #[derive(Debug)]
 pub enum UiUpdate {
     StreamChunk(String),
+    /// A session was loaded via `/resume` or `--resume-last` — the TUI should
+    /// repopulate its chat display with these entries.
+    HistoryLoaded(Vec<HistoryEntry>),
     ToolCall {
         name: String,
         input: String,

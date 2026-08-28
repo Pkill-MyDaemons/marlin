@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use crossterm::{
     event::{
-        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        Event, KeyCode, KeyModifiers, MouseEventKind,
+        self, DisableBracketedPaste, DisableFocusChange, DisableMouseCapture,
+        EnableBracketedPaste, EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyModifiers,
+        MouseEventKind,
     },
     execute,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
@@ -35,15 +36,40 @@ pub fn run(
     mut ui_rx: mpsc::Receiver<UiUpdate>,
     layout: marlin_config::LayoutConfig,
 ) -> io::Result<()> {
+    // If a panic escapes the render loop, the terminal is left in raw mode on
+    // the alternate screen — the screen becomes unreadable and the user has to
+    // `reset` to recover. Install a panic hook that restores the terminal
+    // before the process unwinds, so a crash leaves a usable shell behind.
+    // The hook is installed *before* raw mode is entered so it's in place for
+    // the whole session.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Best-effort restore — ignore errors, we're already panicking.
+        let _ = terminal::disable_raw_mode();
+        let _ = execute!(
+            std::io::stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            DisableFocusChange
+        );
+        default_hook(info);
+    }));
+
     terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     // Without this, a scroll wheel event never reaches the app at all — the
     // terminal emulator just scrolls its own native scrollback buffer instead.
+    // Focus-change events are enabled so the app can force a full redraw when
+    // the tab regains focus (see the FocusGained handler below) — otherwise a
+    // stale alternate-screen frame left behind by the terminal emulator shows
+    // as garbled, misaligned text.
     execute!(
         stdout,
         EnterAlternateScreen,
         EnableMouseCapture,
-        EnableBracketedPaste
+        EnableBracketedPaste,
+        EnableFocusChange
     )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -55,6 +81,12 @@ pub fn run(
     let mut view = View::Splash(SplashView::new());
 
     let mut rate_tick = std::time::Instant::now();
+    // Set when the terminal tab regains focus. The terminal emulator may leave
+    // a stale alternate-screen frame behind (garbled, misaligned text) when the
+    // tab is switched away; ratatui's diff-based rendering only repaints cells
+    // that changed, so static cells stay corrupted. A full clear forces every
+    // cell to be repainted on the next frame.
+    let mut force_redraw = false;
 
     'outer: loop {
         // Process all pending engine updates
@@ -144,6 +176,14 @@ pub fn run(
         let ask_question = chat.ask_pending.clone();
 
         // Render
+        if force_redraw {
+            // The terminal emulator may have left a stale alternate-screen frame
+            // behind while the tab was unfocused. Clear the whole screen so the
+            // next frame repaints every cell from scratch instead of relying on
+            // ratatui's diff (which only repaints changed cells).
+            terminal.clear()?;
+            force_redraw = false;
+        }
         terminal.draw(|f| {
             let area = f.area();
             let buf = f.buffer_mut();
@@ -296,6 +336,12 @@ pub fn run(
                         status_bar.width = w;
                         chat.resize(w, h.saturating_sub(1));
                     }
+                    Event::FocusGained => {
+                        // Tab regained focus — the terminal emulator may have left
+                        // a stale alternate-screen frame behind. Force a full
+                        // redraw on the next frame.
+                        force_redraw = true;
+                    }
                     Event::Mouse(mouse) => {
                         if let View::Splash(_) = &view {
                             continue;
@@ -327,7 +373,8 @@ pub fn run(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture,
-        DisableBracketedPaste
+        DisableBracketedPaste,
+        DisableFocusChange
     )?;
     Ok(())
 }

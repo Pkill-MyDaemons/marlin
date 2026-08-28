@@ -209,6 +209,22 @@ impl ChatView {
 
     pub fn apply_update(&mut self, update: UiUpdate) {
         match update {
+            // A session was loaded via /resume, /history <n>, or --resume-last.
+            // Repopulate the chat display so the resumed conversation is visible
+            // instead of an empty screen (the model already holds the history in
+            // its context window — this only restores what the TUI shows).
+            UiUpdate::HistoryLoaded(entries) => {
+                self.entries.clear();
+                self.entries.extend(entries.into_iter().map(history_entry_to_chat));
+                // Pin to the bottom so the most recent exchange is in view.
+                self.at_bottom = true;
+                self.smooth_offset = f64::MAX;
+                self.stream_buf.clear();
+                self.streaming = false;
+                self.current_tool.clear();
+                self.tool_iterations = 0;
+                self.maybe_scroll_to_bottom();
+            }
             UiUpdate::StreamChunk(chunk) => {
                 if !self.streaming {
                     self.typewriter_pos = 0;
@@ -525,5 +541,27 @@ impl ChatView {
                 None
             }
         }
+    }
+}
+
+/// Convert a `HistoryEntry` (from a loaded/resumed session) into a `ChatEntry`
+/// the renderer knows how to draw. Tool-call entries carry their tool name and
+/// JSON input; tool-result entries carry an error flag.
+fn history_entry_to_chat(e: marlin_engine::HistoryEntry) -> ChatEntry {
+    let role = match e.role.as_str() {
+        "assistant" if !e.tool_name.is_empty() => EntryRole::ToolCall,
+        "tool" => EntryRole::ToolResult { is_error: e.is_error },
+        "assistant" => EntryRole::Assistant,
+        _ => EntryRole::User,
+    };
+    let content = match role {
+        EntryRole::ToolCall => e.tool_input,
+        _ => e.content,
+    };
+    ChatEntry {
+        role,
+        content,
+        tool_name: e.tool_name,
+        time: Local::now(),
     }
 }

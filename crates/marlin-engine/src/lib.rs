@@ -36,7 +36,7 @@ use marlin_snapshots as snapshots;
 use marlin_styles as styles;
 use marlin_tools::{all_tools, executor, policy};
 
-pub use marlin_core::ui::{Action, ConfigState, StatusInfo, UiUpdate};
+pub use marlin_core::ui::{Action, ConfigState, HistoryEntry, StatusInfo, UiUpdate};
 
 // ── Channel types ────────────────────────────────────────────────────────────
 
@@ -309,6 +309,15 @@ impl Engine {
     ) {
         // Send initial status
         let _ = ui_tx.send(UiUpdate::StatusUpdate(self.status_info())).await;
+
+        // If `--resume-last` pre-seeded history before `run()`, repopulate the
+        // TUI's chat display so the resumed conversation is visible immediately
+        // (not just held in the model's context window).
+        if !self.history.is_empty() {
+            let _ = ui_tx
+                .send(UiUpdate::HistoryLoaded(self.history_entries()))
+                .await;
+        }
 
         let _ = ui_tx
             .send(UiUpdate::SystemMsg(
@@ -2543,6 +2552,68 @@ impl Engine {
         history::save_session(&self.marlin_dir, session);
     }
 
+    /// Convert the current `self.history` into `HistoryEntry` values so the TUI
+    /// can repopulate its chat display after a `/resume` / `/history <n>` /
+    /// `--resume-last`. The engine keeps history as provider `Message`s; the TUI
+    /// only needs a light rendering shape, so we flatten tool calls into their
+    /// own entries (matching how `build_lines` in the TUI expects them).
+    fn history_entries(&self) -> Vec<marlin_core::ui::HistoryEntry> {
+        let mut out = Vec::new();
+        for m in &self.history {
+            match m.role.as_str() {
+                "assistant" if !m.tool_calls.is_empty() => {
+                    // Emit the assistant text (if any), then one entry per tool call.
+                    if !m.content.trim().is_empty() {
+                        out.push(marlin_core::ui::HistoryEntry {
+                            role: "assistant".into(),
+                            content: m.content.clone(),
+                            tool_name: String::new(),
+                            tool_input: String::new(),
+                            is_error: false,
+                        });
+                    }
+                    for tc in &m.tool_calls {
+                        out.push(marlin_core::ui::HistoryEntry {
+                            role: "assistant".into(),
+                            content: String::new(),
+                            tool_name: tc.name.clone(),
+                            tool_input: tc.input.clone(),
+                            is_error: false,
+                        });
+                    }
+                }
+                "assistant" => {
+                    out.push(marlin_core::ui::HistoryEntry {
+                        role: "assistant".into(),
+                        content: m.content.clone(),
+                        tool_name: String::new(),
+                        tool_input: String::new(),
+                        is_error: false,
+                    });
+                }
+                "tool" => {
+                    out.push(marlin_core::ui::HistoryEntry {
+                        role: "tool".into(),
+                        content: m.content.clone(),
+                        tool_name: String::new(),
+                        tool_input: String::new(),
+                        is_error: m.is_error,
+                    });
+                }
+                _ => {
+                    out.push(marlin_core::ui::HistoryEntry {
+                        role: "user".into(),
+                        content: m.content.clone(),
+                        tool_name: String::new(),
+                        tool_input: String::new(),
+                        is_error: false,
+                    });
+                }
+            }
+        }
+        out
+    }
+
     // ── Slash command handler ─────────────────────────────────────────────────
 
     /// Handle a slash command. Returns `Some(prompt)` if a prompt-type user command
@@ -3769,6 +3840,9 @@ impl Engine {
                 Ok(sessions) if !sessions.is_empty() => {
                     let s = &sessions[0];
                     self.history = s.messages.iter().map(from_session_message).collect();
+                    let _ = ui_tx
+                        .send(UiUpdate::HistoryLoaded(self.history_entries()))
+                        .await;
                     sys!(format!("Resumed: {}", s.summary()));
                 }
                 _ => sys!("No saved sessions to resume."),
@@ -3792,6 +3866,9 @@ impl Engine {
                         if n >= 1 && n <= sessions.len() {
                             let s = &sessions[n - 1];
                             self.history = s.messages.iter().map(from_session_message).collect();
+                            let _ = ui_tx
+                                .send(UiUpdate::HistoryLoaded(self.history_entries()))
+                                .await;
                             sys!(format!("Loaded: {}", s.summary()));
                             return None;
                         }
